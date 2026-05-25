@@ -35,7 +35,7 @@ export default function PostingPage() {
         if (!user) return;
 
         const { data, error } = await supabase
-          .from("social_accounts")
+          .from("connected_accounts")
           .select("*")
           .eq("user_id", user.id);
 

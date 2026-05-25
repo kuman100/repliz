@@ -41,7 +41,7 @@ export default function SettingsPage() {
         if (!user) return;
 
         const { data, error } = await supabase
-          .from("social_accounts")
+          .from("connected_accounts")
           .select("id, platform, account_name")
           .eq("user_id", user.id)
           .order("created_at", { ascending: true }); // Urutkan berdasarkan waktu ditambahkan
@@ -88,7 +88,7 @@ export default function SettingsPage() {
       } = await supabase.auth.getUser();
       if (!user) return;
 
-      const { error } = await supabase.from("social_accounts").insert({
+      const { error } = await supabase.from("connected_accounts").insert({
         user_id: user.id,
         platform: selectedPlatform,
         account_name: trimmedUsername,
@@ -111,7 +111,7 @@ export default function SettingsPage() {
 
     try {
       const { error } = await supabase
-        .from("social_accounts")
+        .from("connected_accounts")
         .delete()
         .eq("id", id);
 
