@@ -7,12 +7,10 @@ export async function GET(request: Request) {
   const code = url.searchParams.get('code');
   const error = url.searchParams.get('error');
 
-  // 1. Jika user menolak izin
   if (error) {
     return NextResponse.redirect(new URL('/dashboard/settings?error=access_denied', request.url));
   }
 
-  // 2. Jika kode tidak ada
   if (!code) {
     return NextResponse.redirect(new URL('/dashboard/settings?error=no_code', request.url));
   }
@@ -20,14 +18,11 @@ export async function GET(request: Request) {
   try {
     const supabase = await createClient();
     
-    // Pastikan user sudah login di aplikasi Repliz
     const { data: { user }, error: userError } = await supabase.auth.getUser();
-    
     if (userError || !user) {
       return NextResponse.redirect(new URL('/login?error=unauthorized', request.url));
     }
 
-    // Ambil code_verifier dari cookies (yang dibuat saat awal klik login)
     const cookieStore = await cookies();
     const codeVerifier = cookieStore.get('tiktok_code_verifier')?.value;
 
@@ -37,10 +32,9 @@ export async function GET(request: Request) {
 
     const clientKey = process.env.TIKTOK_CLIENT_KEY;
     const clientSecret = process.env.TIKTOK_CLIENT_SECRET;
-    // URL ini WAJIB sama persis dengan yang ada di awal dan di portal TikTok
     const redirectUri = "https://repliz.vercel.app/api/auth/tiktok/callback";
 
-    // 3. Tukar "code" menjadi "access_token" ke server TikTok
+    // Tukar code dengan token
     const tokenResponse = await fetch('https://open.tiktokapis.com/v2/oauth/token/', {
       method: 'POST',
       headers: {
@@ -66,49 +60,78 @@ export async function GET(request: Request) {
 
     const accessToken = tokenData.access_token;
     const refreshToken = tokenData.refresh_token;
-    const openId = tokenData.open_id; // ID unik akun TikTok
+    const openId = tokenData.open_id;
     
-    // 4. (Opsional tapi penting) Ambil Username dan Avatar dari profil TikTok
+    // Ambil profil
     const profileResponse = await fetch('https://open.tiktokapis.com/v2/user/info/?fields=open_id,avatar_url,display_name,username', {
-      headers: {
-        'Authorization': `Bearer ${accessToken}`
-      }
+      headers: { 'Authorization': `Bearer ${accessToken}` }
     });
     
     const profileData = await profileResponse.json();
     const tiktokUser = profileData?.data?.user;
     const username = tiktokUser?.username || tiktokUser?.display_name || 'Akun TikTok';
 
-    // Hitung waktu kadaluarsa token (tokenData.expires_in biasanya dalam detik)
-    const expiresIn = tokenData.expires_in || 86400; // default 1 hari jika kosong
+    const expiresIn = tokenData.expires_in || 86400;
     const expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString();
 
-    // 5. Simpan data ke tabel 'connected_accounts' di Supabase
-    const { error: dbError } = await supabase
+    // ==================== REVISI BAGIAN DATA BASE (JAUH LEBIH AMAN) ====================
+    
+    // 1. Cek apakah akun TikTok dengan openId ini sudah pernah terhubung sebelumnya
+    const { data: existingAccount, error: checkError } = await supabase
       .from('connected_accounts')
-      .upsert({
-        user_id: user.id,
-        platform: 'tiktok',
-        platform_account_id: openId,
-        username: username,
-        access_token: accessToken,
-        refresh_token: refreshToken,
-        token_expires_at: expiresAt,
-        // created_at akan otomatis terisi oleh Supabase
-      }, { 
-        // Cegah duplikat jika akun yang sama ditambahkan lagi
-        onConflict: 'platform_account_id' 
-      });
+      .select('id')
+      .eq('platform_account_id', openId)
+      .maybeSingle();
 
-    if (dbError) {
-      console.error("Database Insert Error:", dbError);
-      return NextResponse.redirect(new URL('/dashboard/settings?error=db_error', request.url));
+    if (checkError) {
+      console.error("Check Account Error:", checkError);
+      return NextResponse.redirect(new URL(`/dashboard/settings?error=db_error&details=${encodeURIComponent(checkError.message)}`, request.url));
     }
 
-    // 6. Bersihkan cookie code_verifier setelah berhasil
-    cookieStore.delete('tiktok_code_verifier');
+    let dbError = null;
 
-    // 7. Jika sukses, kembalikan user ke halaman dashboard/settings
+    if (existingAccount) {
+      // 2A. Jika AKUN SUDAH ADA, lakukan UPDATE token terbaru
+      const { error: updateError } = await supabase
+        .from('connected_accounts')
+        .update({
+          username: username,
+          access_token: accessToken,
+          refresh_token: refreshToken,
+          token_expires_at: expiresAt
+        })
+        .eq('id', existingAccount.id);
+      
+      dbError = updateError;
+    } else {
+      // 2B. Jika AKUN BELUM ADA, lakukan INSERT data baru
+      const { error: insertError } = await supabase
+        .from('connected_accounts')
+        .insert({
+          user_id: user.id,
+          platform: 'tiktok', // CATATAN: Jika error karena ENUM, coba ganti menjadi 'TIKTOK' (Capslock)
+          platform_account_id: openId,
+          username: username,
+          access_token: accessToken,
+          refresh_token: refreshToken,
+          token_expires_at: expiresAt
+        });
+      
+      dbError = insertError;
+    }
+
+    // 3. Jika terjadi error saat insert atau update
+    if (dbError) {
+      console.error("Database Operation Error:", dbError);
+      // Membawa pesan error asli ke URL agar kamu bisa melihat penyebab detailnya di browser
+      return NextResponse.redirect(
+        new URL(`/dashboard/settings?error=db_error&details=${encodeURIComponent(dbError.message)}`, request.url)
+      );
+    }
+
+    // =================================================================================
+
+    cookieStore.delete('tiktok_code_verifier');
     return NextResponse.redirect(new URL('/dashboard/settings?success=tiktok_connected', request.url));
 
   } catch (err) {
