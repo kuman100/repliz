@@ -21,7 +21,7 @@ export default function LandingPage() {
           </div>
           <div>
             <Link
-              href="/dashboard"
+              href="/login"
               className="text-sm font-medium text-gray-600 hover:text-gray-900 px-4 py-2"
             >
               Masuk
