@@ -68,13 +68,22 @@ export async function GET(request: Request) {
     });
     
     const profileData = await profileResponse.json();
+    
+    // === TAMBAHAN LOG UNTUK DEBUGGING ===
+    // Log ini sangat penting agar kita bisa melihat di server (Vercel) apakah TikTok menolak memberikan username
+    console.log("Data Profil TikTok:", JSON.stringify(profileData, null, 2));
+    // ====================================
+
     const tiktokUser = profileData?.data?.user;
-    const username = tiktokUser?.username || tiktokUser?.display_name || 'Akun TikTok';
+    
+    // === PERBAIKAN LOGIKA PENGAMBILAN NAMA ===
+    // Coba ambil username (@), jika gagal ambil display_name, baru terakhir gunakan fallback 'Akun TikTok'
+    const finalUsername = tiktokUser?.username || tiktokUser?.display_name || 'Akun TikTok';
 
     const expiresIn = tokenData.expires_in || 86400;
     const expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString();
 
-    // ==================== REVISI BAGIAN DATA BASE (JAUH LEBIH AMAN) ====================
+    // ==================== REVISI BAGIAN DATA BASE ====================
     
     // 1. Cek apakah akun TikTok dengan openId ini sudah pernah terhubung sebelumnya
     const { data: existingAccount, error: checkError } = await supabase
@@ -95,7 +104,7 @@ export async function GET(request: Request) {
       const { error: updateError } = await supabase
         .from('connected_accounts')
         .update({
-          username: username,
+          username: finalUsername, // <-- Menggunakan finalUsername
           access_token: accessToken,
           refresh_token: refreshToken,
           token_expires_at: expiresAt
@@ -109,9 +118,9 @@ export async function GET(request: Request) {
         .from('connected_accounts')
         .insert({
           user_id: user.id,
-          platform: 'tiktok', // CATATAN: Jika error karena ENUM, coba ganti menjadi 'TIKTOK' (Capslock)
+          platform: 'tiktok', 
           platform_account_id: openId,
-          username: username,
+          username: finalUsername, // <-- Menggunakan finalUsername
           access_token: accessToken,
           refresh_token: refreshToken,
           token_expires_at: expiresAt
@@ -123,7 +132,6 @@ export async function GET(request: Request) {
     // 3. Jika terjadi error saat insert atau update
     if (dbError) {
       console.error("Database Operation Error:", dbError);
-      // Membawa pesan error asli ke URL agar kamu bisa melihat penyebab detailnya di browser
       return NextResponse.redirect(
         new URL(`/dashboard/settings?error=db_error&details=${encodeURIComponent(dbError.message)}`, request.url)
       );
