@@ -6,7 +6,7 @@ export async function GET() {
   const redirectUri = "https://repliz.vercel.app/api/auth/tiktok/callback";
   
   // Izin yang kita minta dari TikTok
-  const scope = "user.info.basic";
+  const scope = "user.info.basic,user.info.profile";
   const state = Math.random().toString(36).substring(7);
 
   // 1. Membuat PKCE code_verifier (kode rahasia acak)
