@@ -12,10 +12,11 @@ import {
 } from "lucide-react";
 import { FaTiktok, FaInstagram, FaYoutube } from "react-icons/fa";
 
+// PERBAIKAN: Ubah account_name menjadi username agar sesuai dengan database
 interface SocialAccount {
   id: string;
   platform: string;
-  account_name: string;
+  username: string;
 }
 
 export default function PostingPage() {
@@ -58,7 +59,8 @@ export default function PostingPage() {
   };
 
   const getPlatformIcon = (platform: string) => {
-    switch (platform) {
+    // Menambahkan .toLowerCase() untuk berjaga-jaga jika format text di database huruf besar
+    switch (platform.toLowerCase()) {
       case "tiktok":
         return <FaTiktok size={18} className="text-black" />;
       case "instagram":
@@ -134,9 +136,12 @@ export default function PostingPage() {
                       <div className="flex-shrink-0 bg-white p-1.5 rounded-lg border border-gray-100 shadow-sm">
                         {getPlatformIcon(acc.platform)}
                       </div>
+
+                      {/* PERBAIKAN: acc.account_name diganti menjadi acc.username */}
                       <span className="font-medium text-gray-700 text-sm flex-1 truncate">
-                        @{acc.account_name}
+                        @{acc.username}
                       </span>
+
                       <div
                         className={`w-5 h-5 rounded-full border flex items-center justify-center ${isSelected ? "border-blue-500 bg-blue-500" : "border-gray-300"}`}
                       >
