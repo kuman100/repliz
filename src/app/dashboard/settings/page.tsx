@@ -5,10 +5,11 @@ import { createClient } from "@/lib/supabase/client";
 import { FaTiktok, FaInstagram, FaYoutube, FaPlus } from "react-icons/fa";
 import { CheckCircle2, Trash2 } from "lucide-react";
 
+// 1. REVISI: Ubah account_name menjadi username
 interface SocialAccount {
   id: string;
   platform: string;
-  account_name: string;
+  username: string;
 }
 
 interface PlatformCardProps {
@@ -27,7 +28,6 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
-  // State untuk Modal
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedPlatform, setSelectedPlatform] = useState("");
   const [newUsername, setNewUsername] = useState("");
@@ -40,11 +40,12 @@ export default function SettingsPage() {
         } = await supabase.auth.getUser();
         if (!user) return;
 
+        // 2. REVISI: Select menggunakan kolom username
         const { data, error } = await supabase
           .from("connected_accounts")
-          .select("id, platform, account_name")
+          .select("id, platform, username")
           .eq("user_id", user.id)
-          .order("created_at", { ascending: true }); // Urutkan berdasarkan waktu ditambahkan
+          .order("created_at", { ascending: true });
 
         if (error) throw error;
         setAccounts(data || []);
@@ -58,23 +59,20 @@ export default function SettingsPage() {
     loadAccounts();
   }, [supabase, refreshTrigger]);
 
-  // Fungsi untuk membuka modal
   const handleConnect = (platform: string) => {
     setSelectedPlatform(platform);
-    setNewUsername(""); // Reset input saat modal dibuka
+    setNewUsername("");
     setIsModalOpen(true);
   };
 
-  // Fungsi untuk menyimpan akun dari modal ke database
   const submitAccount = async () => {
     const trimmedUsername = newUsername.trim();
     if (!trimmedUsername) return;
 
-    // Cek apakah username sudah ada agar tidak duplikat
+    // 3. REVISI: Pengecekan duplikat menggunakan username
     const isDuplicate = accounts.some(
       (acc) =>
-        acc.platform === selectedPlatform &&
-        acc.account_name === trimmedUsername,
+        acc.platform === selectedPlatform && acc.username === trimmedUsername,
     );
 
     if (isDuplicate) {
@@ -88,15 +86,15 @@ export default function SettingsPage() {
       } = await supabase.auth.getUser();
       if (!user) return;
 
+      // 4. REVISI: Insert menggunakan kolom username
       const { error } = await supabase.from("connected_accounts").insert({
         user_id: user.id,
         platform: selectedPlatform,
-        account_name: trimmedUsername,
+        username: trimmedUsername,
       });
 
       if (error) throw error;
 
-      // Tutup modal dan refresh data
       setIsModalOpen(false);
       setNewUsername("");
       setRefreshTrigger((prev) => prev + 1);
@@ -123,7 +121,6 @@ export default function SettingsPage() {
     }
   };
 
-  // Mengubah dari find (1 akun) menjadi filter (banyak akun)
   const getAccountsByPlatform = (platform: string) =>
     accounts.filter((a) => a.platform === platform);
 
@@ -160,7 +157,6 @@ export default function SettingsPage() {
                 icon={<FaTiktok size={24} />}
                 colorClass="text-black"
                 accounts={getAccountsByPlatform("tiktok")}
-                // Ubah bagian onConnect di bawah ini:
                 onConnect={() => {
                   window.location.href = "/api/auth/tiktok";
                 }}
@@ -191,7 +187,6 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      {/* Modal Tambah Akun */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white p-6 rounded-2xl shadow-xl w-full max-w-md animate-in fade-in zoom-in-95 duration-200">
@@ -265,7 +260,6 @@ function PlatformCard({
           </div>
         </div>
 
-        {/* Tombol Tambah Akun */}
         <button
           onClick={onConnect}
           className="flex items-center gap-2 px-3 py-1.5 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
@@ -274,7 +268,6 @@ function PlatformCard({
         </button>
       </div>
 
-      {/* List Akun yang Terhubung */}
       {hasAccounts && (
         <div className="mt-4 space-y-2 pl-[60px]">
           {accounts.map((acc) => (
@@ -284,8 +277,9 @@ function PlatformCard({
             >
               <div className="flex items-center gap-2">
                 <CheckCircle2 size={16} className="text-green-500" />
+                {/* 5. REVISI: Render menggunakan acc.username */}
                 <span className="font-medium text-gray-700">
-                  @{acc.account_name}
+                  @{acc.username}
                 </span>
               </div>
               <button
