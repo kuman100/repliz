@@ -3,7 +3,7 @@ import crypto from "crypto";
 
 export async function GET() {
   const clientKey = process.env.TIKTOK_CLIENT_KEY;
-  const redirectUri = "https://8fe2-2001-448a-7081-1791-3548-35c-286f-a0ac.ngrok-free.app/api/auth/tiktok/callback";
+  const redirectUri = "https://repliz.vercel.app/api/auth/tiktok/callback";
   
   // Izin yang kita minta dari TikTok
   const scope = "user.info.basic";
