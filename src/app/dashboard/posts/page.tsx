@@ -104,7 +104,7 @@ export default function PostingPage() {
 
     try {
       // 1. Panggil API Route lokal Next.js untuk mendapatkan upload_url (Bypass CORS)
-      const initResponse = await fetch("/api/tiktok/init", {
+      const initResponse = await fetch("/api/auth/tiktok/init", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
