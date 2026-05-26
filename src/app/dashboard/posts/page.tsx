@@ -17,7 +17,7 @@ interface SocialAccount {
   id: string;
   platform: string;
   username: string;
-  access_token: string; // Tambahan: Diambil dari DB untuk otorisasi API
+  access_token: string;
 }
 
 export default function PostingPage() {
@@ -40,7 +40,6 @@ export default function PostingPage() {
         } = await supabase.auth.getUser();
         if (!user) return;
 
-        // Memastikan access_token juga ditarik dari database
         const { data, error } = await supabase
           .from("connected_accounts")
           .select("*")
@@ -67,7 +66,6 @@ export default function PostingPage() {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       const file = e.target.files[0];
-      // Validasi sederhana untuk memastikan yang diupload adalah video
       if (!file.type.startsWith("video/")) {
         alert("Harap upload file video (MP4/MOV) untuk TikTok.");
         return;
@@ -89,19 +87,36 @@ export default function PostingPage() {
     }
   };
 
+  // --- FUNGSI UPLOAD KE SUPABASE STORAGE ---
+  // Fungsi ini dipisah agar bisa digunakan oleh tombol Post maupun Draft
+  const uploadToSupabaseStorage = async (file: File) => {
+    const fileExt = file.name.split(".").pop();
+    const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
+    const filePath = `videos/${fileName}`;
+
+    setUploadProgress("Mengunggah video ke penyimpanan (Supabase)...");
+
+    // Asumsi nama bucket kamu adalah 'media'
+    const { error: uploadError } = await supabase.storage
+      .from("media")
+      .upload(filePath, file);
+
+    if (uploadError)
+      throw new Error(
+        "Gagal mengunggah video ke Storage: " + uploadError.message,
+      );
+
+    const { data } = supabase.storage.from("media").getPublicUrl(filePath);
+
+    return data.publicUrl;
+  };
+
+  // --- FUNGSI POSTING LANGSUNG ---
   const handlePost = async () => {
-    if (selectedAccounts.length === 0) {
-      alert("Pilih minimal satu akun tujuan!");
-      return;
-    }
-    if (!videoFile) {
-      alert("Pilih video yang ingin di-upload terlebih dahulu!");
-      return;
-    }
-    if (!caption.trim()) {
-      alert("Caption tidak boleh kosong!");
-      return;
-    }
+    if (selectedAccounts.length === 0)
+      return alert("Pilih minimal satu akun tujuan!");
+    if (!videoFile) return alert("Pilih video yang ingin di-upload!");
+    if (!caption.trim()) return alert("Caption tidak boleh kosong!");
 
     const selectedAccountDetails = accounts.filter((acc) =>
       selectedAccounts.includes(acc.id),
@@ -110,19 +125,19 @@ export default function PostingPage() {
       (acc) => acc.platform.toLowerCase() === "tiktok",
     );
 
-    if (!tiktokAccount) {
-      alert(
-        "Saat ini fitur posting baru mendukung TikTok. Silakan pilih akun TikTok.",
-      );
-      return;
-    }
+    if (!tiktokAccount)
+      return alert("Saat ini fitur posting baru mendukung TikTok.");
 
     setIsSubmitting(true);
-    setUploadProgress("Menginisialisasi upload ke TikTok...");
 
     try {
-      // 1. Inisialisasi Upload Video ke API TikTok
-      // Catatan: Jika terkena blokir CORS di browser, kode fetch ini harus dipindahkan ke endpoint Next.js API Routes (misal: /api/tiktok/publish)
+      // 1. Upload video ke Supabase dulu (bypass limit Vercel)
+      const publicVideoUrl = await uploadToSupabaseStorage(videoFile);
+
+      setUploadProgress("Mengirim instruksi ke TikTok API...");
+
+      // 2. Gunakan metode PULL_FROM_URL ke TikTok API
+      // Karena kita mengirim URL (teks pendek), ini tidak akan terkena limit ukuran Vercel!
       const initResponse = await fetch(
         "https://open.tiktokapis.com/v2/post/publish/video/init/",
         {
@@ -141,10 +156,8 @@ export default function PostingPage() {
               video_cover_timestamp_ms: 1000,
             },
             source_info: {
-              source: "FILE_UPLOAD",
-              video_size: videoFile.size,
-              chunk_size: videoFile.size, // Menggunakan 1 chunk langsung untuk file kecil/menengah
-              total_chunk_count: 1,
+              source: "PULL_FROM_URL",
+              video_url: publicVideoUrl, // TikTok akan mengambil video dari URL ini
             },
           }),
         },
@@ -153,48 +166,75 @@ export default function PostingPage() {
       const initData = await initResponse.json();
 
       if (initData.error?.code !== "ok") {
-        throw new Error(
-          `Gagal inisialisasi: ${initData.error?.message || "Token mungkin expired"}`,
-        );
-      }
-
-      const uploadUrl = initData.data.upload_url;
-      const publishId = initData.data.publish_id;
-
-      setUploadProgress("Mengirim file video ke server TikTok...");
-
-      // 2. Upload file video menggunakan metode PUT ke upload_url
-      const uploadResponse = await fetch(uploadUrl, {
-        method: "PUT",
-        headers: {
-          "Content-Range": `bytes 0-${videoFile.size - 1}/${videoFile.size}`,
-          "Content-Type": videoFile.type,
-        },
-        body: videoFile,
-      });
-
-      if (!uploadResponse.ok) {
-        throw new Error("Gagal mengunggah file video.");
+        throw new Error(`Gagal mempublikasikan: ${initData.error?.message}`);
       }
 
       setUploadProgress("Selesai!");
       alert(
-        `Berhasil mengirim video ke TikTok! (Publish ID: ${publishId}) \n\nCatatan: Video diproses asinkron oleh TikTok. Gunakan endpoint /status/fetch untuk mengecek status finalnya.`,
+        `Berhasil mengirim video ke TikTok! (Publish ID: ${initData.data.publish_id})`,
       );
 
-      // Reset Form
+      // Reset form
       setCaption("");
       setSelectedAccounts([]);
       setVideoFile(null);
       setUploadProgress("");
     } catch (error) {
-      console.error("Error posting to TikTok:", error);
-
-      // Safely extract the error message
+      console.error("Error posting:", error);
       const errorMessage =
         error instanceof Error ? error.message : String(error);
-
       alert(`Terjadi kesalahan: ${errorMessage}`);
+      setUploadProgress("");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // --- FUNGSI SIMPAN KE DRAFT ---
+  const handleSaveDraft = async () => {
+    if (!videoFile && !caption)
+      return alert("Isi caption atau masukkan video untuk menyimpan draft.");
+
+    setIsSubmitting(true);
+    setUploadProgress("Menyimpan draft...");
+
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) throw new Error("User tidak ditemukan");
+
+      let publicVideoUrl = null;
+
+      // Jika ada video, upload ke storage dulu
+      if (videoFile) {
+        publicVideoUrl = await uploadToSupabaseStorage(videoFile);
+      }
+
+      // Simpan datanya ke tabel 'posts' (atau tabel draft kamu)
+      // Perhatikan bahwa kita hanya menyimpan URL-nya (teks), bukan file videonya!
+      const { error } = await supabase.from("posts").insert({
+        user_id: user.id,
+        caption: caption,
+        media_url: publicVideoUrl,
+        status: "draft",
+        platform: "tiktok",
+        created_at: new Date().toISOString(),
+      });
+
+      if (error) throw error;
+
+      alert("Berhasil menyimpan ke draft!");
+
+      // Reset form
+      setCaption("");
+      setVideoFile(null);
+      setUploadProgress("");
+    } catch (error) {
+      console.error("Error saving draft:", error);
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      alert(`Terjadi kesalahan saat menyimpan draft: ${errorMessage}`);
       setUploadProgress("");
     } finally {
       setIsSubmitting(false);
@@ -211,9 +251,7 @@ export default function PostingPage() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Kolom Kiri: Form & Media */}
         <div className="lg:col-span-2 space-y-6">
-          {/* Section Pilih Akun */}
           <div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm">
             <h3 className="text-lg font-semibold text-gray-900 mb-4">
               1. Pilih Akun Tujuan
@@ -245,11 +283,9 @@ export default function PostingPage() {
                       <div className="flex-shrink-0 bg-white p-1.5 rounded-lg border border-gray-100 shadow-sm">
                         {getPlatformIcon(acc.platform)}
                       </div>
-
                       <span className="font-medium text-gray-700 text-sm flex-1 truncate">
                         @{acc.username}
                       </span>
-
                       <div
                         className={`w-5 h-5 rounded-full border flex items-center justify-center ${isSelected ? "border-blue-500 bg-blue-500" : "border-gray-300"}`}
                       >
@@ -264,13 +300,10 @@ export default function PostingPage() {
             )}
           </div>
 
-          {/* Section Upload Media */}
           <div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm">
             <h3 className="text-lg font-semibold text-gray-900 mb-4">
               2. Upload Media (Video)
             </h3>
-
-            {/* Input file tersembunyi */}
             <input
               type="file"
               accept="video/mp4,video/quicktime,video/webm"
@@ -301,7 +334,7 @@ export default function PostingPage() {
                     <CheckCircle2 className="text-green-600" size={24} />
                   </div>
                   <div>
-                    <p className="text-green-900 font-medium">
+                    <p className="text-green-900 font-medium truncate max-w-[200px]">
                       {videoFile.name}
                     </p>
                     <p className="text-green-700 text-sm">
@@ -320,7 +353,6 @@ export default function PostingPage() {
             )}
           </div>
 
-          {/* Section Caption */}
           <div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm">
             <h3 className="text-lg font-semibold text-gray-900 mb-4">
               3. Tulis Caption
@@ -330,14 +362,12 @@ export default function PostingPage() {
               value={caption}
               onChange={(e) => setCaption(e.target.value)}
               placeholder="Tulis deskripsi konten dan gunakan hashtag yang relevan..."
-              className="w-full p-4 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none resize-y"
+              className="w-full p-4 border border-gray-300 text-black rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none resize-y"
             ></textarea>
           </div>
         </div>
 
-        {/* Kolom Kanan: Preview & Jadwal */}
         <div className="space-y-6">
-          {/* Jadwal Publikasi */}
           <div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm">
             <h3 className="text-lg font-semibold text-gray-900 mb-4">
               Jadwal Publikasi
@@ -355,7 +385,7 @@ export default function PostingPage() {
                   />
                   <input
                     type="date"
-                    className="w-full pl-10 p-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                    className="w-full pl-10 p-2.5 border border-gray-300 rounded-lg text-black text-sm focus:ring-2 focus:ring-blue-500 outline-none"
                   />
                 </div>
               </div>
@@ -371,7 +401,7 @@ export default function PostingPage() {
                   />
                   <input
                     type="time"
-                    className="w-full pl-10 p-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                    className="w-full pl-10 p-2.5 border border-gray-300 rounded-lg text-black text-sm focus:ring-2 focus:ring-blue-500 outline-none"
                   />
                 </div>
               </div>
@@ -392,9 +422,15 @@ export default function PostingPage() {
                 className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white p-3 rounded-xl font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Send size={18} />
-                {isSubmitting ? "Memproses API..." : "Posting Langsung"}
+                {isSubmitting ? "Memproses..." : "Posting Langsung"}
               </button>
-              <button className="w-full flex items-center justify-center gap-2 bg-gray-50 hover:bg-gray-100 text-gray-700 border border-gray-200 p-3 rounded-xl font-medium transition-colors">
+
+              {/* TOMBOL DRAFT SUDAH AKTIF */}
+              <button
+                onClick={handleSaveDraft}
+                disabled={isSubmitting}
+                className="w-full flex items-center justify-center gap-2 bg-gray-50 hover:bg-gray-100 text-gray-700 border border-gray-200 p-3 rounded-xl font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
                 <ImageIcon size={18} /> Simpan ke Draft
               </button>
             </div>
